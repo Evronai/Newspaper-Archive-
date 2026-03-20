@@ -1,6 +1,6 @@
 """
 📰 Professional Newspaper Archive System
-Modern, clean UI with professional terminology
+Clean, professional UI with proper text visibility
 Run with: streamlit run streamlit_app.py
 """
 
@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Tuple
 # ==================== CONFIGURATION ====================
 CONFIG_FILE = Path("api_keys.json")
 
-# Page config
+# Page config - MUST be first Streamlit command
 st.set_page_config(
     page_title="Newspaper Archive",
     page_icon="📰",
@@ -395,28 +395,43 @@ def get_articles_by_source():
     conn.close()
     return df
 
-# ==================== PROFESSIONAL UI ====================
+# ==================== PROFESSIONAL UI WITH FIXED TEXT VISIBILITY ====================
 # Load API keys
 api_keys = load_api_keys()
 
 # Initialize database
 init_database()
 
-# Professional CSS
+# FIXED CSS - All text now properly visible
 st.markdown("""
 <style>
-    /* Reset and base */
+    /* Force dark text on light backgrounds */
     .stApp {
-        background: #f8f9fa;
+        background-color: #f5f7fb;
+    }
+    
+    /* Override Streamlit's default theme */
+    .main {
+        color: #1e293b !important;
+    }
+    
+    /* Ensure all text is visible */
+    p, li, span, div, label, .stMarkdown {
+        color: #1e293b !important;
+    }
+    
+    /* Headers */
+    h1, h2, h3, h4, h5, h6 {
+        color: #0f172a !important;
+        font-weight: 600 !important;
     }
     
     /* Professional header */
     .professional-header {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
         padding: 2rem 2rem;
-        border-radius: 12px;
+        border-radius: 16px;
         margin-bottom: 2rem;
-        color: white;
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     
@@ -424,12 +439,12 @@ st.markdown("""
         margin: 0;
         font-size: 2rem;
         font-weight: 600;
-        letter-spacing: -0.5px;
+        color: white !important;
     }
     
     .professional-header p {
         margin: 0.5rem 0 0 0;
-        opacity: 0.8;
+        color: #cbd5e1 !important;
         font-size: 1rem;
     }
     
@@ -446,7 +461,7 @@ st.markdown("""
         border-radius: 12px;
         padding: 1.25rem;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        border: 1px solid #e9ecef;
+        border: 1px solid #e2e8f0;
         transition: transform 0.2s, box-shadow 0.2s;
     }
     
@@ -459,7 +474,7 @@ st.markdown("""
         font-size: 0.85rem;
         text-transform: uppercase;
         letter-spacing: 0.5px;
-        color: #6c757d;
+        color: #64748b !important;
         font-weight: 600;
         margin-bottom: 0.5rem;
     }
@@ -467,14 +482,14 @@ st.markdown("""
     .stat-value {
         font-size: 2rem;
         font-weight: 700;
-        color: #1a1a2e;
+        color: #0f172a !important;
         line-height: 1;
     }
     
     /* Source cards */
     .source-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
         gap: 1.5rem;
         margin: 1.5rem 0;
     }
@@ -483,7 +498,7 @@ st.markdown("""
         background: white;
         border-radius: 12px;
         padding: 1.5rem;
-        border: 1px solid #e9ecef;
+        border: 1px solid #e2e8f0;
         transition: all 0.3s ease;
     }
     
@@ -506,7 +521,7 @@ st.markdown("""
     .source-title {
         font-size: 1.25rem;
         font-weight: 600;
-        color: #1a1a2e;
+        color: #0f172a !important;
         margin: 0;
     }
     
@@ -520,35 +535,35 @@ st.markdown("""
     }
     
     .badge-free {
-        background: #d4edda;
-        color: #155724;
+        background: #dcfce7;
+        color: #166534 !important;
     }
     
     .badge-key {
-        background: #fff3cd;
-        color: #856404;
+        background: #fef9c3;
+        color: #854d0e !important;
     }
     
     .badge-active {
-        background: #d4edda;
-        color: #155724;
+        background: #dcfce7;
+        color: #166534 !important;
     }
     
     .source-description {
-        color: #6c757d;
+        color: #475569 !important;
         font-size: 0.9rem;
         margin-bottom: 1rem;
         line-height: 1.5;
     }
     
-    /* Search section */
+    /* Search container */
     .search-container {
         background: white;
         border-radius: 12px;
         padding: 2rem;
         margin: 2rem 0;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        border: 1px solid #e9ecef;
+        border: 1px solid #e2e8f0;
     }
     
     /* Result cards */
@@ -557,13 +572,13 @@ st.markdown("""
         border-radius: 12px;
         padding: 1.5rem;
         margin-bottom: 1rem;
-        border: 1px solid #e9ecef;
+        border: 1px solid #e2e8f0;
         transition: all 0.2s;
     }
     
     .result-card:hover {
         box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-        border-color: #dee2e6;
+        border-color: #cbd5e1;
     }
     
     .result-title {
@@ -573,13 +588,15 @@ st.markdown("""
     }
     
     .result-title a {
-        color: #1a1a2e;
+        color: #0f172a !important;
         text-decoration: none;
+        font-weight: 600;
         transition: color 0.2s;
     }
     
     .result-title a:hover {
-        color: #4a6cf7;
+        color: #3b82f6 !important;
+        text-decoration: underline;
     }
     
     .result-meta {
@@ -588,7 +605,6 @@ st.markdown("""
         gap: 1rem;
         margin-bottom: 0.75rem;
         font-size: 0.8rem;
-        color: #6c757d;
     }
     
     .source-tag {
@@ -600,22 +616,22 @@ st.markdown("""
     }
     
     .source-chronicling_america {
-        background: #e7f3ff;
-        color: #0066cc;
+        background: #dbeafe;
+        color: #1e40af !important;
     }
     
     .source-guardian {
-        background: #fee8e6;
-        color: #cc3300;
+        background: #fee2e2;
+        color: #991b1b !important;
     }
     
     .source-trove {
-        background: #e6f3e6;
-        color: #008000;
+        background: #dcfce7;
+        color: #166534 !important;
     }
     
     .result-snippet {
-        color: #495057;
+        color: #334155 !important;
         line-height: 1.5;
         margin-bottom: 0.75rem;
     }
@@ -625,18 +641,23 @@ st.markdown("""
     }
     
     .result-link a {
-        color: #4a6cf7;
+        color: #3b82f6 !important;
         text-decoration: none;
+        font-weight: 500;
+    }
+    
+    .result-link a:hover {
+        text-decoration: underline;
     }
     
     /* Sidebar styling */
     [data-testid="stSidebar"] {
-        background: white;
-        border-right: 1px solid #e9ecef;
+        background: #ffffff;
+        border-right: 1px solid #e2e8f0;
     }
     
     [data-testid="stSidebar"] .stMarkdown {
-        color: #495057;
+        color: #1e293b !important;
     }
     
     /* Button styling */
@@ -644,27 +665,77 @@ st.markdown("""
         border-radius: 8px;
         font-weight: 500;
         transition: all 0.2s;
+        background-color: #3b82f6;
+        color: white !important;
+        border: none;
+    }
+    
+    .stButton button:hover {
+        background-color: #2563eb;
+        transform: translateY(-1px);
     }
     
     .stButton button:active {
-        transform: scale(0.98);
+        transform: translateY(0);
     }
     
     /* Input styling */
     .stTextInput input, .stSelectbox select, .stMultiselect div {
         border-radius: 8px;
-        border: 1px solid #dee2e6;
+        border: 1px solid #cbd5e1;
+        background-color: white;
+        color: #1e293b !important;
     }
     
     .stTextInput input:focus {
-        border-color: #4a6cf7;
-        box-shadow: 0 0 0 2px rgba(74,108,247,0.1);
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 2px rgba(59,130,246,0.1);
+    }
+    
+    /* Tabs styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 2rem;
+        background-color: #f8fafc;
+        padding: 0.5rem;
+        border-radius: 12px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        color: #64748b !important;
+        font-weight: 500;
+    }
+    
+    .stTabs [data-baseweb="tab"]:hover {
+        color: #0f172a !important;
+    }
+    
+    /* Metric styling */
+    [data-testid="stMetricValue"] {
+        color: #0f172a !important;
+        font-weight: 700;
+    }
+    
+    [data-testid="stMetricLabel"] {
+        color: #64748b !important;
+    }
+    
+    /* Alert/Info boxes */
+    .stAlert {
+        background-color: #f1f5f9;
+        border-left: 4px solid #3b82f6;
+        color: #1e293b !important;
+    }
+    
+    /* Expander */
+    .streamlit-expanderHeader {
+        color: #1e293b !important;
+        font-weight: 500;
     }
     
     /* Divider */
     .custom-divider {
         height: 1px;
-        background: linear-gradient(to right, transparent, #dee2e6, transparent);
+        background: linear-gradient(to right, transparent, #cbd5e1, transparent);
         margin: 2rem 0;
     }
     
@@ -672,10 +743,20 @@ st.markdown("""
     .professional-footer {
         text-align: center;
         padding: 2rem;
-        color: #6c757d;
+        color: #64748b !important;
         font-size: 0.85rem;
-        border-top: 1px solid #e9ecef;
+        border-top: 1px solid #e2e8f0;
         margin-top: 2rem;
+    }
+    
+    /* Status messages */
+    .stSuccess, .stInfo, .stWarning, .stError {
+        color: #1e293b !important;
+    }
+    
+    /* Make sure all text in containers is visible */
+    .block-container {
+        color: #1e293b !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -783,7 +864,7 @@ st.markdown("### 📡 Data Sources")
 st.markdown("Import content from these trusted newspaper archives:")
 
 # Source cards
-sources = [
+source_data = [
     {
         "name": "Chronicling America",
         "icon": "🇺🇸",
@@ -814,7 +895,7 @@ sources = [
 
 st.markdown('<div class="source-grid">', unsafe_allow_html=True)
 
-for source in sources:
+for source in source_data:
     st.markdown(f"""
     <div class="source-card">
         <div class="source-header">
