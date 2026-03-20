@@ -1,5 +1,6 @@
 """
-📰 Free Newspaper Archive - Mobile Optimized Version
+📰 Professional Newspaper Archive System
+Modern, clean UI with professional terminology
 Run with: streamlit run streamlit_app.py
 """
 
@@ -9,25 +10,22 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 import time
-import os
 import json
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 # ==================== CONFIGURATION ====================
 CONFIG_FILE = Path("api_keys.json")
 
-# Mobile detection and optimization
-def is_mobile():
-    """Detect if the user is on mobile"""
-    try:
-        # Check screen width via JavaScript (set in custom CSS)
-        if 'mobile_detected' not in st.session_state:
-            st.session_state.mobile_detected = False
-        return st.session_state.mobile_detected
-    except:
-        return False
+# Page config
+st.set_page_config(
+    page_title="Newspaper Archive",
+    page_icon="📰",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-def load_api_keys():
+def load_api_keys() -> Dict:
     """Load API keys from config file"""
     if CONFIG_FILE.exists():
         with open(CONFIG_FILE, 'r') as f:
@@ -35,11 +33,10 @@ def load_api_keys():
     return {
         'guardian': '',
         'trove': '',
-        'nytimes': '',
-        'washington_post': ''
+        'nytimes': ''
     }
 
-def save_api_keys(keys):
+def save_api_keys(keys: Dict) -> None:
     """Save API keys to config file"""
     with open(CONFIG_FILE, 'w') as f:
         json.dump(keys, f)
@@ -47,7 +44,7 @@ def save_api_keys(keys):
 # ==================== DATABASE SETUP ====================
 DATABASE_NAME = 'newspaper_archive.db'
 
-def init_database():
+def init_database() -> None:
     """Initialize the SQLite database with full-text search support"""
     conn = sqlite3.connect(DATABASE_NAME)
     cursor = conn.cursor()
@@ -109,12 +106,19 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
-# ==================== HARVESTERS ====================
-class ChroniclingAmericaHarvester:
+# ==================== DATA SOURCES ====================
+class ChroniclingAmericaSource:
+    """Chronicling America (Library of Congress) - Free, no API key required"""
+    
     SOURCE_NAME = "chronicling_america"
     BASE_URL = "https://chroniclingamerica.loc.gov"
+    DISPLAY_NAME = "Chronicling America"
+    ICON = "🇺🇸"
+    DESCRIPTION = "US historical newspapers (1777-1963)"
+    REQUIRES_API_KEY = False
     
-    def harvest_date(self, year, month, day):
+    def import_date(self, year: int, month: int, day: int) -> int:
+        """Import articles for a specific date"""
         date_str = f"{year:04d}-{month:02d}-{day:02d}"
         search_url = f"{self.BASE_URL}/search/pages/results/?date1={date_str}&date2={date_str}&format=json&rows=100"
         
@@ -164,19 +168,26 @@ class ChroniclingAmericaHarvester:
         except Exception as e:
             return 0
 
-class GuardianHarvester:
+class GuardianSource:
+    """The Guardian Open Platform - Requires API key"""
+    
     SOURCE_NAME = "guardian"
     BASE_URL = "https://content.guardianapis.com/search"
+    DISPLAY_NAME = "The Guardian"
+    ICON = "🇬🇧"
+    DESCRIPTION = "Modern news and analysis (1999-present)"
+    REQUIRES_API_KEY = True
     
-    def __init__(self, api_key=None):
+    def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key
     
-    def is_configured(self):
+    def is_configured(self) -> bool:
         return bool(self.api_key and self.api_key != '')
     
-    def harvest_search(self, query, limit=20):
+    def import_search(self, query: str, limit: int = 20) -> Tuple[int, str]:
+        """Import articles by search query"""
         if not self.is_configured():
-            return 0, "API key not configured"
+            return 0, "API key required"
         
         params = {
             'api-key': self.api_key,
@@ -237,19 +248,26 @@ class GuardianHarvester:
         except Exception as e:
             return 0, f"Error: {str(e)}"
 
-class TroveHarvester:
+class TroveSource:
+    """Trove (National Library of Australia) - Requires API key"""
+    
     SOURCE_NAME = "trove"
     BASE_URL = "https://api.trove.nla.gov.au/v3"
+    DISPLAY_NAME = "Trove"
+    ICON = "🇦🇺"
+    DESCRIPTION = "Australian historical newspapers (1803-1954)"
+    REQUIRES_API_KEY = True
     
-    def __init__(self, api_key=None):
+    def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key
     
-    def is_configured(self):
+    def is_configured(self) -> bool:
         return bool(self.api_key and self.api_key != '')
     
-    def harvest_search(self, query, limit=20):
+    def import_search(self, query: str, limit: int = 20) -> Tuple[int, str]:
+        """Import articles by search query"""
         if not self.is_configured():
-            return 0, "API key not configured"
+            return 0, "API key required"
         
         params = {
             'apiKey': self.api_key,
@@ -310,7 +328,8 @@ class TroveHarvester:
             return 0, f"Error: {str(e)}"
 
 # ==================== SEARCH ENGINE ====================
-def search_articles(query, limit=100):
+def search_articles(query: str, limit: int = 100) -> List[Dict]:
+    """Search articles using FTS5 full-text search"""
     conn = get_db()
     cursor = conn.cursor()
     
@@ -343,7 +362,8 @@ def search_articles(query, limit=100):
     finally:
         conn.close()
 
-def get_stats():
+def get_statistics() -> Dict:
+    """Get database statistics"""
     conn = get_db()
     cursor = conn.cursor()
     
@@ -369,576 +389,645 @@ def get_stats():
     }
 
 def get_articles_by_source():
+    """Get articles grouped by source"""
     conn = get_db()
     df = pd.read_sql_query("SELECT source, COUNT(*) as count FROM articles GROUP BY source", conn)
     conn.close()
     return df
 
-def get_articles_by_year():
-    conn = get_db()
-    df = pd.read_sql_query("""
-        SELECT 
-            SUBSTR(publication_date, 1, 4) as year,
-            COUNT(*) as count
-        FROM articles 
-        WHERE publication_date IS NOT NULL AND publication_date != ''
-        GROUP BY year
-        ORDER BY year
-    """, conn)
-    conn.close()
-    return df
-
-# ==================== MOBILE-OPTIMIZED STREAMLIT UI ====================
-st.set_page_config(
-    page_title="Free Newspaper Archive",
-    page_icon="📰",
-    layout="wide",
-    initial_sidebar_state="auto"  # Auto-collapse on mobile
-)
-
-# Mobile detection via custom CSS
-st.markdown("""
-    <script>
-        // Detect mobile device and set session state
-        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-        if (isMobile) {
-            document.body.classList.add('mobile-device');
-        }
-    </script>
-""", unsafe_allow_html=True)
-
+# ==================== PROFESSIONAL UI ====================
 # Load API keys
 api_keys = load_api_keys()
 
-# Mobile-optimized CSS
+# Initialize database
+init_database()
+
+# Professional CSS
 st.markdown("""
-    <style>
-    /* Global mobile-first styles */
-    * {
-        -webkit-tap-highlight-color: transparent;
-    }
-    
+<style>
+    /* Reset and base */
     .stApp {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: #f8f9fa;
     }
     
-    /* Make buttons larger for touch on mobile */
-    @media (max-width: 768px) {
-        button, .stButton button {
-            min-height: 48px !important;
-            font-size: 16px !important;
-            padding: 12px 20px !important;
-        }
-        
-        /* Larger touch targets for inputs */
-        input, textarea, .stTextInput input {
-            min-height: 48px !important;
-            font-size: 16px !important;
-        }
-        
-        /* Better spacing for mobile */
-        .block-container {
-            padding: 1rem 0.8rem !important;
-        }
-        
-        /* Adjust column spacing */
-        .row-widget.stHorizontal {
-            gap: 0.5rem !important;
-        }
-        
-        /* Make cards easier to tap */
-        .result-card {
-            padding: 1rem !important;
-            margin-bottom: 0.8rem !important;
-        }
-        
-        /* Larger clickable areas for links */
-        a {
-            display: inline-block;
-            padding: 4px 0;
-        }
-        
-        /* Adjust sidebar for mobile */
-        [data-testid="stSidebar"] {
-            min-width: 280px !important;
-        }
-        
-        /* Better touch scrolling */
-        .stMarkdown {
-            overflow-x: auto;
-            -webkit-overflow-scrolling: touch;
-        }
-        
-        /* Larger font for readability on mobile */
-        body, p, li, .stMarkdown {
-            font-size: 16px !important;
-            line-height: 1.5 !important;
-        }
-        
-        /* Headers smaller on mobile */
-        h1 {
-            font-size: 1.8rem !important;
-        }
-        h2 {
-            font-size: 1.4rem !important;
-        }
-        h3 {
-            font-size: 1.2rem !important;
-        }
-    }
-    
-    /* Desktop styles */
-    @media (min-width: 769px) {
-        .result-card {
-            padding: 1.5rem !important;
-            margin-bottom: 1rem !important;
-        }
-    }
-    
-    /* Header styling */
-    .main-header {
-        text-align: center;
+    /* Professional header */
+    .professional-header {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        padding: 2rem 2rem;
+        border-radius: 12px;
+        margin-bottom: 2rem;
         color: white;
-        padding: 1rem;
-        border-radius: 10px;
-        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     
-    .main-header h1 {
+    .professional-header h1 {
         margin: 0;
         font-size: 2rem;
+        font-weight: 600;
+        letter-spacing: -0.5px;
     }
     
-    .main-header p {
+    .professional-header p {
         margin: 0.5rem 0 0 0;
-        opacity: 0.9;
+        opacity: 0.8;
+        font-size: 1rem;
     }
     
-    /* Stat cards - responsive grid */
-    .stats-grid {
+    /* Statistics cards */
+    .stats-container {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: 1rem;
-        margin: 1rem 0;
+        margin-bottom: 2rem;
     }
     
     .stat-card {
-        background: rgba(255,255,255,0.2);
-        backdrop-filter: blur(10px);
-        border-radius: 15px;
-        padding: 1rem;
-        text-align: center;
-        color: white;
+        background: white;
+        border-radius: 12px;
+        padding: 1.25rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        border: 1px solid #e9ecef;
+        transition: transform 0.2s, box-shadow 0.2s;
     }
     
-    .stat-number {
-        font-size: 1.8rem;
-        font-weight: bold;
-        margin: 0.5rem 0;
+    .stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
     }
     
     .stat-label {
         font-size: 0.85rem;
-        opacity: 0.9;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #6c757d;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+    }
+    
+    .stat-value {
+        font-size: 2rem;
+        font-weight: 700;
+        color: #1a1a2e;
+        line-height: 1;
+    }
+    
+    /* Source cards */
+    .source-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 1.5rem;
+        margin: 1.5rem 0;
+    }
+    
+    .source-card {
+        background: white;
+        border-radius: 12px;
+        padding: 1.5rem;
+        border: 1px solid #e9ecef;
+        transition: all 0.3s ease;
+    }
+    
+    .source-card:hover {
+        box-shadow: 0 8px 24px rgba(0,0,0,0.1);
+        transform: translateY(-4px);
+    }
+    
+    .source-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+    }
+    
+    .source-icon {
+        font-size: 2rem;
+    }
+    
+    .source-title {
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #1a1a2e;
+        margin: 0;
+    }
+    
+    .source-badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        margin-left: 0.5rem;
+    }
+    
+    .badge-free {
+        background: #d4edda;
+        color: #155724;
+    }
+    
+    .badge-key {
+        background: #fff3cd;
+        color: #856404;
+    }
+    
+    .badge-active {
+        background: #d4edda;
+        color: #155724;
+    }
+    
+    .source-description {
+        color: #6c757d;
+        font-size: 0.9rem;
+        margin-bottom: 1rem;
+        line-height: 1.5;
+    }
+    
+    /* Search section */
+    .search-container {
+        background: white;
+        border-radius: 12px;
+        padding: 2rem;
+        margin: 2rem 0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        border: 1px solid #e9ecef;
     }
     
     /* Result cards */
     .result-card {
         background: white;
         border-radius: 12px;
-        padding: 1rem;
-        margin-bottom: 0.8rem;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        transition: transform 0.2s;
-        word-wrap: break-word;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+        border: 1px solid #e9ecef;
+        transition: all 0.2s;
     }
     
-    .result-card:active {
-        transform: scale(0.98);
+    .result-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        border-color: #dee2e6;
     }
     
-    .result-card h3, .result-card h4 {
-        margin: 0 0 0.5rem 0;
+    .result-title {
+        margin: 0 0 0.75rem 0;
         font-size: 1.1rem;
+        font-weight: 600;
     }
     
-    .result-card h3 a, .result-card h4 a {
-        color: #333;
+    .result-title a {
+        color: #1a1a2e;
         text-decoration: none;
+        transition: color 0.2s;
+    }
+    
+    .result-title a:hover {
+        color: #4a6cf7;
     }
     
     .result-meta {
-        font-size: 0.75rem;
-        color: #666;
-        margin: 0.5rem 0;
         display: flex;
         flex-wrap: wrap;
-        gap: 0.5rem;
-        align-items: center;
+        gap: 1rem;
+        margin-bottom: 0.75rem;
+        font-size: 0.8rem;
+        color: #6c757d;
     }
     
-    .source-badge {
+    .source-tag {
         display: inline-block;
-        padding: 0.2rem 0.5rem;
-        border-radius: 12px;
+        padding: 0.2rem 0.6rem;
+        border-radius: 20px;
         font-size: 0.7rem;
-        font-weight: bold;
+        font-weight: 600;
     }
     
     .source-chronicling_america {
-        background: #e3f2fd;
-        color: #1976d2;
+        background: #e7f3ff;
+        color: #0066cc;
     }
     
     .source-guardian {
-        background: #fef3e8;
-        color: #f57c00;
+        background: #fee8e6;
+        color: #cc3300;
     }
     
     .source-trove {
-        background: #e8f5e9;
-        color: #388e3c;
+        background: #e6f3e6;
+        color: #008000;
     }
     
     .result-snippet {
-        font-size: 0.9rem;
-        color: #555;
-        line-height: 1.4;
-        margin-top: 0.5rem;
+        color: #495057;
+        line-height: 1.5;
+        margin-bottom: 0.75rem;
     }
     
-    /* Harvest cards */
-    .harvest-card {
-        background: rgba(255,255,255,0.95);
-        border-radius: 12px;
-        padding: 1rem;
-        height: 100%;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    .result-link {
+        font-size: 0.85rem;
     }
     
-    .harvest-card h4 {
-        margin: 0 0 0.5rem 0;
-        font-size: 1.2rem;
+    .result-link a {
+        color: #4a6cf7;
+        text-decoration: none;
     }
     
-    /* API status badges */
-    .api-status {
-        display: inline-block;
-        padding: 0.2rem 0.5rem;
-        border-radius: 20px;
-        font-size: 0.7rem;
-        font-weight: bold;
-        margin-left: 0.5rem;
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background: white;
+        border-right: 1px solid #e9ecef;
     }
     
-    .api-active {
-        background: #4caf50;
-        color: white;
+    [data-testid="stSidebar"] .stMarkdown {
+        color: #495057;
     }
     
-    .api-inactive {
-        background: #f44336;
-        color: white;
+    /* Button styling */
+    .stButton button {
+        border-radius: 8px;
+        font-weight: 500;
+        transition: all 0.2s;
     }
     
-    /* Mobile bottom padding for easier scrolling */
-    .stApp {
-        padding-bottom: 20px;
+    .stButton button:active {
+        transform: scale(0.98);
     }
     
-    /* Toast-like messages for mobile */
-    .stAlert {
-        border-radius: 12px;
-        margin: 0.5rem 0;
+    /* Input styling */
+    .stTextInput input, .stSelectbox select, .stMultiselect div {
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
     }
-    </style>
+    
+    .stTextInput input:focus {
+        border-color: #4a6cf7;
+        box-shadow: 0 0 0 2px rgba(74,108,247,0.1);
+    }
+    
+    /* Divider */
+    .custom-divider {
+        height: 1px;
+        background: linear-gradient(to right, transparent, #dee2e6, transparent);
+        margin: 2rem 0;
+    }
+    
+    /* Footer */
+    .professional-footer {
+        text-align: center;
+        padding: 2rem;
+        color: #6c757d;
+        font-size: 0.85rem;
+        border-top: 1px solid #e9ecef;
+        margin-top: 2rem;
+    }
+</style>
 """, unsafe_allow_html=True)
 
-# Initialize database
-init_database()
-
-# ==================== MOBILE-FRIENDLY LAYOUT ====================
-# Use tabs instead of sidebar for mobile? Let's keep sidebar but make it collapsible
+# ==================== SIDEBAR ====================
 with st.sidebar:
-    # Collapsible header for mobile
-    st.markdown("""
-        <div style="text-align: center;">
-            <img src="https://img.icons8.com/fluency/96/newspaper.png" width="60">
-            <h3 style="margin: 0.5rem 0;">📰 Newspaper Archive</h3>
-        </div>
-    """, unsafe_allow_html=True)
-    
+    st.markdown("### 📚 Archive Information")
     st.markdown("---")
     
-    # ==================== API KEY MANAGEMENT ====================
-    with st.expander("🔑 Configure API Keys", expanded=False):
-        st.markdown("""
-        **Get free API keys:**
-        - 🗞️ [The Guardian](https://open-platform.theguardian.com/access/)
-        - 🇦🇺 [Trove](https://trove.nla.gov.au/api)
-        """)
+    # Statistics in sidebar
+    stats = get_statistics()
+    
+    st.markdown("#### Collection Stats")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Total Articles", f"{stats['total_articles']:,}")
+    with col2:
+        st.metric("Newspapers", f"{stats['newspapers']:,}")
+    
+    if stats['total_articles'] > 0:
+        st.markdown("#### Sources")
+        for source in stats['sources']:
+            source_name = source['source'].replace('_', ' ').title()
+            st.markdown(f"• **{source_name}**: {source['count']:,} articles")
+    
+    st.markdown("---")
+    st.markdown("#### Settings")
+    
+    with st.expander("API Configuration", expanded=False):
+        st.markdown("**Get free API keys:**")
+        st.markdown("- [The Guardian](https://open-platform.theguardian.com/access/)")
+        st.markdown("- [Trove](https://trove.nla.gov.au/api)")
         
         guardian_key = st.text_input(
             "Guardian API Key",
             value=api_keys['guardian'],
             type="password",
-            placeholder="Enter your key",
-            key="guardian_key_input"
+            placeholder="Enter API key",
+            key="guardian_key"
         )
         
         trove_key = st.text_input(
             "Trove API Key",
             value=api_keys['trove'],
             type="password",
-            placeholder="Enter your key",
-            key="trove_key_input"
+            placeholder="Enter API key",
+            key="trove_key"
         )
         
-        if st.button("💾 Save Keys", use_container_width=True):
+        if st.button("Save Configuration", use_container_width=True):
             api_keys['guardian'] = guardian_key
             api_keys['trove'] = trove_key
             save_api_keys(api_keys)
-            st.success("✅ Keys saved!")
+            st.success("Configuration saved")
             st.rerun()
-    
-    # API Status
-    st.markdown("### 📡 Status")
-    
-    # Chronicling America (always free)
-    st.markdown("**Chronicling America** ✅ Free")
-    
-    # Guardian status
-    if api_keys['guardian']:
-        st.markdown("**The Guardian** ✅ Active")
-    else:
-        st.markdown("**The Guardian** ⚠️ Add key")
-    
-    # Trove status
-    if api_keys['trove']:
-        st.markdown("**Trove** ✅ Active")
-    else:
-        st.markdown("**Trove** ⚠️ Add key")
-    
-    st.markdown("---")
-    
-    # Stats in compact form for mobile
-    stats = get_stats()
-    st.markdown("### 📊 Stats")
-    
-    # Use columns for compact stats
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Articles", f"{stats['total_articles']:,}")
-    with col2:
-        st.metric("Newspapers", f"{stats['newspapers']:,}")
-    
-    if stats['total_articles'] > 0:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Dates", f"{stats['dates']:,}")
-        with col2:
-            st.metric("Sources", f"{len(stats['sources'])}")
 
-# Main content
+# ==================== MAIN CONTENT ====================
+
+# Professional Header
 st.markdown("""
-<div class="main-header">
-    <h1>📰 Free Newspaper Archive</h1>
-    <p>Search millions of historical and modern newspapers</p>
+<div class="professional-header">
+    <h1>📰 Newspaper Archive</h1>
+    <p>Access millions of historical and contemporary newspapers from trusted sources</p>
 </div>
 """, unsafe_allow_html=True)
 
-# ==================== HARVESTING SECTION (MOBILE-OPTIMIZED) ====================
-st.subheader("🌾 Harvest Articles")
-
-# Use columns that stack on mobile
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.markdown("""
-    <div class="harvest-card">
-        <h4>🇺🇸 Chronicling America</h4>
-        <p style="font-size: 0.85rem;">Free • No key needed</p>
-        <p>Historical US newspapers (1777-1963)</p>
-    </div>
-    """, unsafe_allow_html=True)
+# Statistics Dashboard
+if stats['total_articles'] > 0:
+    st.markdown('<div class="stats-container">', unsafe_allow_html=True)
     
-    if st.button("📜 Harvest Historical Events", key="harvest_ca", use_container_width=True):
-        with st.spinner("Harvesting..."):
-            ca = ChroniclingAmericaHarvester()
-            
-            historical_dates = [
-                ("Moon Landing", 1969, 7, 20),
-                ("Pearl Harbor", 1941, 12, 7),
-                ("WWII Ends", 1945, 9, 2),
-                ("Titanic Sinks", 1912, 4, 15),
-                ("JFK Assassination", 1963, 11, 22)
-            ]
-            
-            progress_bar = st.progress(0)
-            status = st.empty()
-            total = 0
-            
-            for i, (event, year, month, day) in enumerate(historical_dates):
-                status.text(f"{event}...")
-                count = ca.harvest_date(year, month, day)
-                total += count
-                progress_bar.progress((i + 1) / len(historical_dates))
-                time.sleep(0.5)
-            
-            status.text(f"✅ Added {total} articles!")
-            st.success(f"Added {total} historical articles")
-            time.sleep(1.5)
-            st.rerun()
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-label">Total Articles</div>
+            <div class="stat-value">{stats['total_articles']:,}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-label">Newspapers</div>
+            <div class="stat-value">{stats['newspapers']:,}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col3:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-label">Publication Dates</div>
+            <div class="stat-value">{stats['dates']:,}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col4:
+        st.markdown(f"""
+        <div class="stat-card">
+            <div class="stat-label">Data Sources</div>
+            <div class="stat-value">{len(stats['sources'])}</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown('</div>', unsafe_allow_html=True)
 
-with col2:
-    st.markdown("""
-    <div class="harvest-card">
-        <h4>🇬🇧 The Guardian</h4>
-        <p style="font-size: 0.85rem;">Requires API key</p>
-        <p>Modern news (1999-present)</p>
+# ==================== DATA SOURCES SECTION ====================
+st.markdown("### 📡 Data Sources")
+st.markdown("Import content from these trusted newspaper archives:")
+
+# Source cards
+sources = [
+    {
+        "name": "Chronicling America",
+        "icon": "🇺🇸",
+        "description": "Access historical American newspapers from the Library of Congress collection, covering 1777 to 1963.",
+        "badge": "Free Access",
+        "badge_class": "badge-free",
+        "requires_key": False
+    },
+    {
+        "name": "The Guardian",
+        "icon": "🇬🇧",
+        "description": "Modern news coverage from one of the UK's leading newspapers, with articles from 1999 to present.",
+        "badge": "API Key Required" if not api_keys['guardian'] else "Active",
+        "badge_class": "badge-key" if not api_keys['guardian'] else "badge-active",
+        "requires_key": True,
+        "has_key": api_keys['guardian'] != ''
+    },
+    {
+        "name": "Trove",
+        "icon": "🇦🇺",
+        "description": "Explore Australian historical newspapers from the National Library of Australia, spanning 1803 to 1954.",
+        "badge": "API Key Required" if not api_keys['trove'] else "Active",
+        "badge_class": "badge-key" if not api_keys['trove'] else "badge-active",
+        "requires_key": True,
+        "has_key": api_keys['trove'] != ''
+    }
+]
+
+st.markdown('<div class="source-grid">', unsafe_allow_html=True)
+
+for source in sources:
+    st.markdown(f"""
+    <div class="source-card">
+        <div class="source-header">
+            <span class="source-icon">{source['icon']}</span>
+            <h3 class="source-title">{source['name']}</h3>
+            <span class="source-badge {source['badge_class']}">{source['badge']}</span>
+        </div>
+        <div class="source-description">{source['description']}</div>
     </div>
     """, unsafe_allow_html=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
+
+# ==================== IMPORT CONTROLS ====================
+st.markdown("### 📥 Import Content")
+
+tab1, tab2, tab3 = st.tabs(["🇺🇸 US Historical", "🇬🇧 The Guardian", "🇦🇺 Australian"])
+
+with tab1:
+    st.markdown("#### Chronicling America")
+    st.markdown("Import significant historical events from the Library of Congress collection.")
+    
+    historical_events = [
+        ("Apollo 11 Moon Landing", 1969, 7, 20),
+        ("Pearl Harbor Attack", 1941, 12, 7),
+        ("End of World War II", 1945, 9, 2),
+        ("Titanic Sinking", 1912, 4, 15),
+        ("Assassination of JFK", 1963, 11, 22),
+        ("First Wright Brothers Flight", 1903, 12, 17),
+        ("Stock Market Crash", 1929, 10, 29)
+    ]
+    
+    selected_events = st.multiselect(
+        "Select events to import",
+        [event[0] for event in historical_events],
+        default=["Apollo 11 Moon Landing", "Pearl Harbor Attack"]
+    )
+    
+    if st.button("Import Selected Events", type="primary", use_container_width=True):
+        ca_source = ChroniclingAmericaSource()
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        total_imported = 0
+        for i, event_name in enumerate(selected_events):
+            event = next(e for e in historical_events if e[0] == event_name)
+            status_text.text(f"Importing: {event_name}...")
+            count = ca_source.import_date(event[1], event[2], event[3])
+            total_imported += count
+            progress_bar.progress((i + 1) / len(selected_events))
+            time.sleep(0.5)
+        
+        status_text.text(f"✓ Import complete: {total_imported} articles added")
+        st.success(f"Successfully imported {total_imported} articles")
+        time.sleep(2)
+        st.rerun()
+
+with tab2:
+    st.markdown("#### The Guardian")
     
     if api_keys['guardian']:
-        # Compact topic selection for mobile
+        st.markdown("Import recent articles by topic.")
+        
         topics = st.multiselect(
-            "Topics",
-            ["tech", "science", "climate", "politics"],
-            default=["tech", "science"],
-            key="guardian_topics"
+            "Select topics",
+            ["Technology", "Science", "Climate", "Politics", "Arts", "Business", "Sports"],
+            default=["Technology", "Science"]
         )
         
-        limit = st.selectbox("Articles", [10, 20, 30], index=1, key="guardian_limit")
+        article_limit = st.slider("Articles per topic", 5, 50, 20)
         
-        if st.button("🌾 Harvest Guardian", key="harvest_guardian", use_container_width=True):
-            guardian = GuardianHarvester(api_keys['guardian'])
-            with st.spinner("Harvesting..."):
-                progress = st.progress(0)
-                total = 0
-                for i, topic in enumerate(topics):
-                    count, msg = guardian.harvest_search(topic, limit=int(limit))
-                    total += count
-                    progress.progress((i + 1) / len(topics))
-                    time.sleep(1)
-                st.success(f"✅ Added {total} articles!")
-                time.sleep(1.5)
-                st.rerun()
+        if st.button("Import Articles", type="primary", use_container_width=True):
+            guardian = GuardianSource(api_keys['guardian'])
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            total_imported = 0
+            for i, topic in enumerate(topics):
+                status_text.text(f"Importing: {topic}...")
+                count, message = guardian.import_search(topic.lower(), article_limit)
+                total_imported += count
+                progress_bar.progress((i + 1) / len(topics))
+                time.sleep(1)
+            
+            status_text.text(f"✓ Import complete: {total_imported} articles added")
+            st.success(f"Successfully imported {total_imported} articles")
+            time.sleep(2)
+            st.rerun()
     else:
-        st.info("Add API key in sidebar", icon="🔑")
+        st.info("🔑 API key required. Configure it in the sidebar to import from The Guardian.")
+        st.markdown("[Get your free API key](https://open-platform.theguardian.com/access/)")
 
-with col3:
-    st.markdown("""
-    <div class="harvest-card">
-        <h4>🇦🇺 Trove</h4>
-        <p style="font-size: 0.85rem;">Requires API key</p>
-        <p>Australian newspapers (1803-1954)</p>
-    </div>
-    """, unsafe_allow_html=True)
+with tab3:
+    st.markdown("#### Trove")
     
     if api_keys['trove']:
+        st.markdown("Import historical Australian newspaper articles.")
+        
         topics = st.multiselect(
-            "Topics",
-            ["history", "australia", "sydney"],
-            default=["history"],
-            key="trove_topics"
+            "Select topics",
+            ["Australian History", "Sydney", "Melbourne", "Gold Rush", "WWI", "Exploration"],
+            default=["Australian History"]
         )
         
-        limit = st.selectbox("Articles", [10, 20, 30], index=1, key="trove_limit")
+        article_limit = st.slider("Articles per topic", 5, 50, 20)
         
-        if st.button("🌾 Harvest Trove", key="harvest_trove", use_container_width=True):
-            trove = TroveHarvester(api_keys['trove'])
-            with st.spinner("Harvesting..."):
-                progress = st.progress(0)
-                total = 0
-                for i, topic in enumerate(topics):
-                    count, msg = trove.harvest_search(topic, limit=int(limit))
-                    total += count
-                    progress.progress((i + 1) / len(topics))
-                    time.sleep(1)
-                st.success(f"✅ Added {total} articles!")
-                time.sleep(1.5)
-                st.rerun()
+        if st.button("Import Articles", type="primary", use_container_width=True):
+            trove = TroveSource(api_keys['trove'])
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            total_imported = 0
+            for i, topic in enumerate(topics):
+                status_text.text(f"Importing: {topic}...")
+                count, message = trove.import_search(topic.lower(), article_limit)
+                total_imported += count
+                progress_bar.progress((i + 1) / len(topics))
+                time.sleep(1)
+            
+            status_text.text(f"✓ Import complete: {total_imported} articles added")
+            st.success(f"Successfully imported {total_imported} articles")
+            time.sleep(2)
+            st.rerun()
     else:
-        st.info("Add API key in sidebar", icon="🔑")
+        st.info("🔑 API key required. Configure it in the sidebar to import from Trove.")
+        st.markdown("[Get your free API key](https://trove.nla.gov.au/api)")
 
-st.markdown("---")
+st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
-# ==================== SEARCH SECTION (MOBILE-OPTIMIZED) ====================
-st.subheader("🔍 Search Archive")
+# ==================== SEARCH SECTION ====================
+st.markdown("### 🔍 Search Archive")
 
-# Mobile-friendly search
 search_query = st.text_input(
     "",
-    placeholder="Search articles, events, names...",
-    key="search_input"
+    placeholder="Enter keywords, names, dates, or topics...",
+    label_visibility="collapsed"
 )
 
-# Search buttons row - responsive
-search_col1, search_col2 = st.columns(2)
-with search_col1:
-    search_button = st.button("🔍 Search", type="primary", use_container_width=True)
-with search_col2:
-    if st.button("🎲 Random", use_container_width=True):
+col1, col2, col3 = st.columns([1, 1, 4])
+with col1:
+    search_button = st.button("Search", type="primary", use_container_width=True)
+with col2:
+    if st.button("Browse Recent", use_container_width=True):
         search_query = "the"
         search_button = True
 
 # Results
 if search_button and search_query:
-    with st.spinner(f"Searching..."):
+    with st.spinner(f"Searching for '{search_query}'..."):
         results = search_articles(search_query, limit=50)
     
     if results:
-        st.success(f"Found {len(results)} results")
+        st.markdown(f"**Found {len(results)} articles**")
         
         for article in results:
             source_class = f"source-{article['source'].replace('_', '-')}"
+            source_display = article['source'].replace('_', ' ').title()
+            
             st.markdown(f"""
             <div class="result-card">
-                <h3><a href="{article['page_url']}" target="_blank">{article['title'][:100]}</a></h3>
-                <div class="result-meta">
-                    <span class="source-badge {source_class}">{article['source'].replace('_', ' ').upper()}</span>
-                    <span>📰 {article['newspaper_name'][:30]}</span>
-                    <span>📅 {article['publication_date'] or 'Unknown'}</span>
+                <div class="result-title">
+                    <a href="{article['page_url']}" target="_blank">{article['title'][:150]}</a>
                 </div>
-                <div class="result-snippet">{article['content'][:200] if article['content'] else 'No preview'}</div>
-                <small><a href="{article['page_url']}" target="_blank">Read full article →</a></small>
+                <div class="result-meta">
+                    <span class="source-tag {source_class}">{source_display}</span>
+                    <span>📰 {article['newspaper_name'][:50]}</span>
+                    <span>📅 {article['publication_date'] or 'Date unknown'}</span>
+                </div>
+                <div class="result-snippet">
+                    {article['content'][:300] if article['content'] else 'No preview available'}
+                </div>
+                <div class="result-link">
+                    <a href="{article['page_url']}" target="_blank">Read full article →</a>
+                </div>
             </div>
             """, unsafe_allow_html=True)
     else:
-        st.warning("No results found. Try different keywords or harvest more articles.")
+        st.info("No articles found. Try different keywords or import content from the sources above.")
 
 elif stats['total_articles'] == 0:
     st.info("""
-    ### 👋 Welcome!
+    ### Welcome to Newspaper Archive
     
     **Get started:**
-    1. Click **"Harvest Historical Events"** above
-    2. Or add API keys in sidebar for more content
-    3. Search your archive!
+    1. Select events or topics from the sections above
+    2. Click "Import" to add articles to your archive
+    3. Search across all imported content
     
-    *No API key needed for US historical newspapers*
+    *Chronicling America is free and requires no API key*
     """)
 else:
     # Show recent articles
-    st.subheader("📰 Recently Added")
+    st.markdown("#### Recently Added")
     recent = search_articles("a", limit=5)
     if recent:
         for article in recent:
             source_class = f"source-{article['source'].replace('_', '-')}"
             st.markdown(f"""
             <div class="result-card">
-                <h4><a href="{article['page_url']}" target="_blank">{article['title'][:80]}</a></h4>
+                <div class="result-title">
+                    <a href="{article['page_url']}" target="_blank">{article['title'][:100]}</a>
+                </div>
                 <div class="result-meta">
-                    <span class="source-badge {source_class}">{article['source'].replace('_', ' ').upper()}</span>
-                    <span>📅 {article['publication_date']}</span>
+                    <span class="source-tag {source_class}">{article['source'].replace('_', ' ').title()}</span>
+                    <span>📅 {article['publication_date'] or 'Date unknown'}</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-# Footer (compact for mobile)
+# Footer
 st.markdown("""
-<div style="text-align: center; padding: 1.5rem; font-size: 0.75rem; color: rgba(255,255,255,0.8);">
-    <p>📚 Sources: Chronicling America (LOC) • The Guardian • Trove (NLA)</p>
-    <p>🔗 All articles link to original sources</p>
+<div class="professional-footer">
+    <p>Newspaper Archive • Powered by Library of Congress, The Guardian, and Trove</p>
+    <p style="font-size: 0.75rem; margin-top: 0.5rem;">All articles link to original sources. Respect copyright and terms of service.</p>
 </div>
 """, unsafe_allow_html=True)
