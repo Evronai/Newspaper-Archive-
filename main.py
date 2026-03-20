@@ -1,6 +1,6 @@
 """
-📚 Newspaper Archive - Library Style Interface (FULLY WORKING)
-Both Chronicling America and The Guardian working properly
+📚 Newspaper Archive - Library Style Interface
+Working with multiple reliable newspaper sources
 Run with: streamlit run streamlit_app.py
 """
 
@@ -30,7 +30,7 @@ def load_api_keys() -> Dict:
     if CONFIG_FILE.exists():
         with open(CONFIG_FILE, 'r') as f:
             return json.load(f)
-    return {'guardian': '', 'trove': ''}
+    return {'guardian': '', 'nytimes': '', 'washington_post': ''}
 
 def save_api_keys(keys: Dict) -> None:
     with open(CONFIG_FILE, 'w') as f:
@@ -74,71 +74,13 @@ def get_db():
     return conn
 
 # ==================== DATA SOURCES ====================
-class ChroniclingAmericaSource:
-    SOURCE_NAME = "chronicling_america"
-    BASE_URL = "https://chroniclingamerica.loc.gov"
-    
-    def import_date(self, year, month, day):
-        """Import articles for a specific date"""
-        date_str = f"{year:04d}-{month:02d}-{day:02d}"
-        # Try different search approaches
-        search_urls = [
-            f"{self.BASE_URL}/search/pages/results/?date1={date_str}&date2={date_str}&format=json&rows=50",
-            f"{self.BASE_URL}/search/pages/results/?proxtext=&dateFilterType=yearRange&date1={date_str}&date2={date_str}&format=json&rows=50"
-        ]
-        
-        for url in search_urls:
-            try:
-                response = requests.get(url, timeout=15)
-                if response.status_code == 200:
-                    data = response.json()
-                    items = data.get('items', [])
-                    
-                    if items:
-                        conn = get_db()
-                        cursor = conn.cursor()
-                        stored = 0
-                        
-                        for item in items:
-                            external_id = item.get('id')
-                            if not external_id:
-                                continue
-                            
-                            cursor.execute('SELECT id FROM articles WHERE source = ? AND external_id = ?', 
-                                         (self.SOURCE_NAME, external_id))
-                            if cursor.fetchone():
-                                continue
-                            
-                            title = item.get('title', 'Untitled')
-                            newspaper = item.get('title', 'Unknown')
-                            content = item.get('ocr_eng', '')
-                            if not content:
-                                content = item.get('ocr', '')
-                            
-                            # Get the page URL
-                            page_url = f"{self.BASE_URL}{item.get('url', '')}" if item.get('url') else None
-                            
-                            if content and len(content) > 50:  # Only store if there's meaningful content
-                                cursor.execute('''
-                                    INSERT INTO articles 
-                                    (source, external_id, title, newspaper_name, publication_date, content, page_url)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                                ''', (self.SOURCE_NAME, external_id, title[:200], newspaper, date_str, content[:3000], page_url))
-                                stored += 1
-                        
-                        conn.commit()
-                        conn.close()
-                        
-                        if stored > 0:
-                            return stored
-            except Exception as e:
-                continue
-        
-        return 0
 
 class GuardianSource:
+    """The Guardian API - Working"""
     SOURCE_NAME = "guardian"
     BASE_URL = "https://content.guardianapis.com/search"
+    DISPLAY_NAME = "The Guardian"
+    ICON = "🇬🇧"
     
     def __init__(self, api_key=None):
         self.api_key = api_key
@@ -148,7 +90,7 @@ class GuardianSource:
     
     def import_search(self, query, limit=20):
         if not self.is_configured():
-            return 0, "API key required"
+            return 0, "API key required. Get one at: https://open-platform.theguardian.com/access/"
         
         params = {
             'api-key': self.api_key,
@@ -197,19 +139,159 @@ class GuardianSource:
                         INSERT INTO articles 
                         (source, external_id, title, newspaper_name, publication_date, content, page_url)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (self.SOURCE_NAME, external_id, title[:200], 'The Guardian', date, content[:3000], page_url))
+                    ''', (self.SOURCE_NAME, external_id, title[:300], 'The Guardian', date, content[:5000], page_url))
                     stored += 1
             
             conn.commit()
             conn.close()
-            return stored, "Success"
+            return stored, f"Successfully imported {stored} articles"
             
         except Exception as e:
             return 0, f"Error: {str(e)}"
 
+class NYTimesSource:
+    """New York Times API - Requires API key"""
+    SOURCE_NAME = "nytimes"
+    BASE_URL = "https://api.nytimes.com/svc/search/v2/articlesearch.json"
+    DISPLAY_NAME = "The New York Times"
+    ICON = "🗽"
+    
+    def __init__(self, api_key=None):
+        self.api_key = api_key
+    
+    def is_configured(self):
+        return bool(self.api_key and self.api_key != '')
+    
+    def import_search(self, query, limit=10):
+        if not self.is_configured():
+            return 0, "API key required. Get one at: https://developer.nytimes.com/"
+        
+        params = {
+            'api-key': self.api_key,
+            'q': query,
+            'sort': 'newest',
+        }
+        
+        try:
+            response = requests.get(self.BASE_URL, params=params, timeout=15)
+            
+            if response.status_code == 401:
+                return 0, "Invalid API key"
+            if response.status_code != 200:
+                return 0, f"API error: {response.status_code}"
+            
+            data = response.json()
+            articles = data.get('response', {}).get('docs', [])
+            
+            if not articles:
+                return 0, "No articles found"
+            
+            conn = get_db()
+            cursor = conn.cursor()
+            stored = 0
+            
+            for article in articles[:limit]:
+                external_id = article.get('_id')
+                if not external_id:
+                    continue
+                
+                cursor.execute('SELECT id FROM articles WHERE source = ? AND external_id = ?', 
+                             (self.SOURCE_NAME, external_id))
+                if cursor.fetchone():
+                    continue
+                
+                title = article.get('headline', {}).get('main', 'Untitled')
+                date = article.get('pub_date', '')[:10]
+                content = article.get('lead_paragraph', '')
+                page_url = article.get('web_url', '')
+                
+                if content:
+                    cursor.execute('''
+                        INSERT INTO articles 
+                        (source, external_id, title, newspaper_name, publication_date, content, page_url)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (self.SOURCE_NAME, external_id, title[:300], 'The New York Times', date, content[:5000], page_url))
+                    stored += 1
+            
+            conn.commit()
+            conn.close()
+            return stored, f"Successfully imported {stored} articles"
+            
+        except Exception as e:
+            return 0, f"Error: {str(e)}"
+
+class DemoSource:
+    """Demo source with sample articles for testing"""
+    SOURCE_NAME = "demo"
+    DISPLAY_NAME = "Sample Articles"
+    ICON = "📰"
+    
+    def import_demo_articles(self):
+        """Import sample articles for demonstration"""
+        demo_articles = [
+            {
+                "title": "The Future of Artificial Intelligence",
+                "newspaper": "Tech Times",
+                "date": "2024-01-15",
+                "content": "Artificial intelligence is transforming every industry. From healthcare to finance, AI applications are becoming increasingly sophisticated. Researchers predict that AI will continue to evolve rapidly in the coming years, bringing both opportunities and challenges.",
+                "url": "https://example.com/ai-future"
+            },
+            {
+                "title": "Climate Change: A Global Challenge",
+                "newspaper": "Environment Daily",
+                "date": "2024-01-10",
+                "content": "Scientists warn that urgent action is needed to address climate change. Rising temperatures, extreme weather events, and sea-level rise are affecting communities worldwide. Renewable energy adoption is accelerating, but more needs to be done.",
+                "url": "https://example.com/climate-change"
+            },
+            {
+                "title": "Space Exploration Reaches New Heights",
+                "newspaper": "Science Weekly",
+                "date": "2024-01-05",
+                "content": "Recent missions to the Moon and Mars are opening new frontiers in space exploration. Private companies and government agencies are collaborating to push the boundaries of human spaceflight and scientific discovery.",
+                "url": "https://example.com/space-exploration"
+            },
+            {
+                "title": "The Evolution of Digital Privacy",
+                "newspaper": "Tech Review",
+                "date": "2023-12-20",
+                "content": "As technology becomes more integrated into daily life, privacy concerns are growing. New regulations and technologies are emerging to protect personal data and give users more control over their information.",
+                "url": "https://example.com/digital-privacy"
+            },
+            {
+                "title": "Breakthroughs in Medical Research",
+                "newspaper": "Health News",
+                "date": "2023-12-15",
+                "content": "Scientists have made significant advances in understanding diseases and developing new treatments. From cancer research to vaccine development, medical innovation is saving lives and improving health outcomes.",
+                "url": "https://example.com/medical-research"
+            }
+        ]
+        
+        conn = get_db()
+        cursor = conn.cursor()
+        stored = 0
+        
+        for article in demo_articles:
+            external_id = f"demo_{article['title'].replace(' ', '_')}"
+            
+            cursor.execute('SELECT id FROM articles WHERE source = ? AND external_id = ?', 
+                         (self.SOURCE_NAME, external_id))
+            if cursor.fetchone():
+                continue
+            
+            cursor.execute('''
+                INSERT INTO articles 
+                (source, external_id, title, newspaper_name, publication_date, content, page_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (self.SOURCE_NAME, external_id, article['title'], article['newspaper'], 
+                  article['date'], article['content'], article['url']))
+            stored += 1
+        
+        conn.commit()
+        conn.close()
+        return stored
+
 # ==================== LIBRARY FUNCTIONS ====================
 def get_all_articles(limit=100, offset=0):
-    """Get all articles with pagination"""
     conn = get_db()
     cursor = conn.cursor()
     
@@ -239,7 +321,6 @@ def get_total_article_count():
     return total
 
 def get_articles_by_year(year):
-    """Get articles from a specific year"""
     conn = get_db()
     cursor = conn.cursor()
     
@@ -262,7 +343,6 @@ def get_articles_by_year(year):
     return results
 
 def get_all_newspapers():
-    """Get list of all newspapers in the database"""
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('''
@@ -277,7 +357,6 @@ def get_all_newspapers():
     return newspapers
 
 def get_all_sources():
-    """Get list of all sources with counts"""
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('''
@@ -290,7 +369,6 @@ def get_all_sources():
     return sources
 
 def get_all_years():
-    """Get list of all years with article counts"""
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute('''
@@ -305,7 +383,6 @@ def get_all_years():
     return years
 
 def search_articles(query, year_from=None, year_to=None, limit=100):
-    """Search articles with optional year filtering"""
     conn = get_db()
     cursor = conn.cursor()
     
@@ -410,9 +487,10 @@ with tab_library:
         st.info("📭 The library is empty. Go to the 'Import Content' tab to add articles.")
         st.markdown("""
         ### Quick Start:
-        1. **For historical US newspapers**: Use the "Import from Chronicling America" section below
-        2. **For modern news**: Add your Guardian API key and import topics
-        3. **Browse** your collection once you have articles!
+        1. **Try the Demo**: Click "Load Sample Articles" to see how the library works
+        2. **Add Guardian**: Get a free API key and import real news
+        3. **Add NYTimes**: Get a free API key for New York Times articles
+        4. **Browse** your collection once you have articles!
         """)
     else:
         browse_by = st.radio(
@@ -513,8 +591,9 @@ with tab_library:
             
             if sources:
                 source_display = {
-                    'chronicling_america': {'name': 'Chronicling America (LOC)', 'icon': '🇺🇸', 'color': '#3b82f6'},
-                    'guardian': {'name': 'The Guardian', 'icon': '🇬🇧', 'color': '#10b981'}
+                    'guardian': {'name': 'The Guardian', 'icon': '🇬🇧', 'color': '#10b981'},
+                    'nytimes': {'name': 'The New York Times', 'icon': '🗽', 'color': '#3b82f6'},
+                    'demo': {'name': 'Sample Articles', 'icon': '📰', 'color': '#f59e0b'}
                 }
                 
                 cols = st.columns(2)
@@ -620,61 +699,26 @@ with tab_search:
 with tab_import:
     st.subheader("Add Content to Library")
     
-    # Chronicling America Import
-    st.markdown("### 🇺🇸 Chronicling America (Free)")
-    st.caption("US historical newspapers 1777-1963 - No API key required")
+    # Demo Articles
+    st.markdown("### 📰 Sample Articles (For Testing)")
+    st.caption("Load sample articles to see how the library works")
     
-    # Test dates that definitely have content
-    test_dates = [
-        ("Apollo 11 Moon Landing", 1969, 7, 20),
-        ("Pearl Harbor Attack", 1941, 12, 7),
-        ("End of WWII", 1945, 9, 2),
-        ("Titanic Sinking", 1912, 4, 15),
-        ("JFK Assassination", 1963, 11, 22),
-    ]
-    
-    st.markdown("**Test these known dates:**")
-    cols = st.columns(3)
-    for idx, (event, year, month, day) in enumerate(test_dates):
-        with cols[idx % 3]:
-            if st.button(f"{event}\n{year}-{month:02d}-{day:02d}", key=f"test_{idx}"):
-                source = ChroniclingAmericaSource()
-                with st.spinner(f"Importing {event}..."):
-                    count = source.import_date(year, month, day)
-                    if count > 0:
-                        st.success(f"✅ Imported {count} articles from {event}")
-                        time.sleep(1.5)
-                        st.rerun()
-                    else:
-                        st.warning(f"No articles found for {event}. The API might be temporarily unavailable.")
+    if st.button("📚 Load Sample Articles", type="primary"):
+        demo = DemoSource()
+        count = demo.import_demo_articles()
+        if count > 0:
+            st.success(f"✅ Added {count} sample articles to the library")
+            time.sleep(1.5)
+            st.rerun()
+        else:
+            st.info("Sample articles already loaded")
     
     st.divider()
     
-    # Custom date import
-    st.markdown("**Or enter a custom date:**")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        import_year = st.number_input("Year", min_value=1777, max_value=1963, value=1945, step=1)
-    with col2:
-        import_month = st.selectbox("Month", list(range(1, 13)), index=8)  # September
-    with col3:
-        import_day = st.selectbox("Day", list(range(1, 32)), index=1)
-    
-    if st.button("Import by Specific Date", type="primary"):
-        source = ChroniclingAmericaSource()
-        with st.spinner(f"Importing articles from {import_year}-{import_month:02d}-{import_day:02d}..."):
-            count = source.import_date(import_year, import_month, import_day)
-            if count > 0:
-                st.success(f"✅ Imported {count} articles")
-                time.sleep(1.5)
-                st.rerun()
-            else:
-                st.warning("No articles found for this date. Try a different date or check if the date is within 1777-1963.")
-    
-    st.divider()
-    
-    # The Guardian Import
+    # The Guardian
     st.markdown("### 🇬🇧 The Guardian")
+    st.caption("Modern news articles (1999-present)")
+    
     if api_keys['guardian']:
         st.success("✅ API key configured")
         
@@ -687,39 +731,71 @@ with tab_import:
                 with st.spinner(f"Importing articles about {custom_topic}..."):
                     count, msg = source.import_search(custom_topic, topic_limit)
                     if count > 0:
-                        st.success(f"✅ Imported {count} articles about {custom_topic}")
+                        st.success(f"✅ {msg}")
                         time.sleep(1.5)
                         st.rerun()
                     else:
-                        st.warning(f"No articles found for '{custom_topic}'. {msg}")
+                        st.warning(msg)
         
         with st.expander("Popular Topics (click to import)"):
             popular_topics = [
                 "technology", "science", "climate change", "artificial intelligence",
                 "space exploration", "renewable energy", "healthcare", "education",
-                "democracy", "human rights", "economy", "sports", "culture",
-                "environment", "innovation", "future of work", "digital transformation"
+                "democracy", "human rights", "economy", "sports", "culture"
             ]
             cols = st.columns(3)
             for idx, topic in enumerate(popular_topics):
                 with cols[idx % 3]:
-                    if st.button(topic, key=f"popular_{idx}"):
+                    if st.button(topic, key=f"guardian_topic_{idx}"):
                         source = GuardianSource(api_keys['guardian'])
                         with st.spinner(f"Importing articles about {topic}..."):
                             count, msg = source.import_search(topic, 15)
                             if count > 0:
-                                st.success(f"✅ Imported {count} articles about {topic}")
+                                st.success(f"✅ {msg}")
                                 time.sleep(1.5)
                                 st.rerun()
     else:
         st.warning("⚠️ API key required for The Guardian")
         guardian_input = st.text_input("Enter Guardian API Key", type="password")
-        if st.button("Save API Key"):
+        if st.button("Save Guardian API Key"):
             api_keys['guardian'] = guardian_input
             save_api_keys(api_keys)
             st.success("API key saved!")
             st.rerun()
         st.caption("Get free key: https://open-platform.theguardian.com/access/")
+    
+    st.divider()
+    
+    # New York Times
+    st.markdown("### 🗽 The New York Times")
+    st.caption("Historical and modern articles (1851-present)")
+    
+    if api_keys['nytimes']:
+        st.success("✅ API key configured")
+        
+        nyt_topic = st.text_input("Enter topic for NYTimes", placeholder="e.g., moon landing, world war, technology", key="nyt_topic")
+        
+        if nyt_topic:
+            nyt_limit = st.slider("Number of articles (NYTimes)", 5, 30, 10, key="nyt_limit")
+            if st.button(f"Import NYTimes articles about '{nyt_topic}'"):
+                source = NYTimesSource(api_keys['nytimes'])
+                with st.spinner(f"Importing articles about {nyt_topic}..."):
+                    count, msg = source.import_search(nyt_topic, nyt_limit)
+                    if count > 0:
+                        st.success(f"✅ {msg}")
+                        time.sleep(1.5)
+                        st.rerun()
+                    else:
+                        st.warning(msg)
+    else:
+        st.info("🔑 Add NYTimes API key to import articles")
+        nyt_input = st.text_input("Enter NYTimes API Key", type="password", key="nyt_key_input")
+        if st.button("Save NYTimes API Key"):
+            api_keys['nytimes'] = nyt_input
+            save_api_keys(api_keys)
+            st.success("API key saved!")
+            st.rerun()
+        st.caption("Get free key: https://developer.nytimes.com/")
 
 # ==================== SIDEBAR ====================
 with st.sidebar:
@@ -731,26 +807,32 @@ with st.sidebar:
         st.markdown("### 📊 Collection Stats")
         
         sources = get_all_sources()
+        source_names = {
+            'guardian': 'The Guardian',
+            'nytimes': 'NY Times',
+            'demo': 'Sample Articles'
+        }
         for source in sources:
-            name = "Chronicling America" if source['source'] == 'chronicling_america' else "The Guardian"
+            name = source_names.get(source['source'], source['source'])
             st.caption(f"• {name}: {source['count']:,} articles")
         
         st.divider()
-        st.markdown("### 🗞️ Newspapers")
+        st.markdown("### 🗞️ Top Newspapers")
         top_papers = get_all_newspapers()[:5]
         for paper in top_papers:
             st.caption(f"• {paper['newspaper_name'][:35]}: {paper['count']}")
     
     st.divider()
-    st.caption("💡 **Tips:**")
-    st.caption("• Try known historical dates for Chronicling America")
-    st.caption("• Add Guardian API key for modern news")
-    st.caption("• Browse by year to see what's available")
+    st.markdown("### 💡 Tips")
+    st.caption("• Start with 'Load Sample Articles' to see the library in action")
+    st.caption("• Add Guardian API key for real news")
+    st.caption("• Add NYTimes API key for historical articles")
+    st.caption("• Browse by year to see your collection")
 
 st.divider()
 st.markdown("""
 <div style="text-align: center; padding: 1rem; color: #666;">
-    <p>📚 Newspaper Library • Historical and contemporary newspapers</p>
-    <p style="font-size: 0.8rem;">Sources: Library of Congress (Chronicling America) and The Guardian</p>
+    <p>📚 Newspaper Library • Powered by The Guardian and The New York Times APIs</p>
+    <p style="font-size: 0.8rem;">Get free API keys from The Guardian and NYTimes to import real articles</p>
 </div>
 """, unsafe_allow_html=True)
