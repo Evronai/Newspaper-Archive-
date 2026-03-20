@@ -1,6 +1,6 @@
 """
-📰 Newspaper Archive System
-Clean, working version with proper text visibility
+📚 Newspaper Archive - Library Style Interface
+Complete library browsing with unlimited topics and full article catalog
 Run with: streamlit run streamlit_app.py
 """
 
@@ -8,17 +8,19 @@ import streamlit as st
 import sqlite3
 import requests
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import json
 from pathlib import Path
 from typing import Dict, List, Tuple
+import random
 
 # ==================== PAGE CONFIG ====================
 st.set_page_config(
-    page_title="Newspaper Archive",
-    page_icon="📰",
-    layout="wide"
+    page_title="Newspaper Library",
+    page_icon="📚",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # ==================== DATABASE SETUP ====================
@@ -60,6 +62,10 @@ def init_database():
             content_rowid=id
         )
     ''')
+    
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_date ON articles(publication_date)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_source ON articles(source)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_newspaper ON articles(newspaper_name)')
     
     conn.commit()
     conn.close()
@@ -128,7 +134,7 @@ class GuardianSource:
     def is_configured(self):
         return bool(self.api_key and self.api_key != '')
     
-    def import_search(self, query, limit=20):
+    def import_search(self, query, limit=50):
         if not self.is_configured():
             return 0, "API key required"
         
@@ -136,7 +142,7 @@ class GuardianSource:
             'api-key': self.api_key,
             'q': query,
             'format': 'json',
-            'page-size': min(limit, 50),
+            'page-size': min(limit, 200),
             'show-fields': 'bodyText'
         }
         
@@ -181,26 +187,198 @@ class GuardianSource:
         except Exception as e:
             return 0, str(e)
 
-# ==================== SEARCH FUNCTIONS ====================
-def search_articles(query, limit=50):
+# ==================== LIBRARY FUNCTIONS ====================
+def get_all_articles(limit=100, offset=0, sort_by='date_desc'):
+    """Get all articles with pagination"""
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    order = "a.publication_date DESC" if sort_by == 'date_desc' else "a.publication_date ASC" if sort_by == 'date_asc' else "a.title ASC"
+    
+    cursor.execute(f'''
+        SELECT a.id, a.source, a.title, a.newspaper_name, 
+               a.publication_date, a.content, a.page_url
+        FROM articles a
+        ORDER BY {order}
+        LIMIT ? OFFSET ?
+    ''', (limit, offset))
+    
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    for r in results:
+        if r['content'] and len(r['content']) > 200:
+            r['content'] = r['content'][:200] + '...'
+    
+    return results
+
+def get_total_article_count():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) as total FROM articles')
+    total = cursor.fetchone()['total']
+    conn.close()
+    return total
+
+def get_articles_by_year(year):
+    """Get articles from a specific year"""
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT a.id, a.source, a.title, a.newspaper_name, 
+               a.publication_date, a.content, a.page_url
+        FROM articles a
+        WHERE SUBSTR(a.publication_date, 1, 4) = ?
+        ORDER BY a.publication_date DESC
+        LIMIT 200
+    ''', (str(year),))
+    
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    for r in results:
+        if r['content'] and len(r['content']) > 200:
+            r['content'] = r['content'][:200] + '...'
+    
+    return results
+
+def get_articles_by_source(source):
+    """Get articles from a specific source"""
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT a.id, a.source, a.title, a.newspaper_name, 
+               a.publication_date, a.content, a.page_url
+        FROM articles a
+        WHERE a.source = ?
+        ORDER BY a.publication_date DESC
+        LIMIT 200
+    ''', (source,))
+    
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    for r in results:
+        if r['content'] and len(r['content']) > 200:
+            r['content'] = r['content'][:200] + '...'
+    
+    return results
+
+def get_articles_by_newspaper(newspaper):
+    """Get articles from a specific newspaper"""
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT a.id, a.source, a.title, a.newspaper_name, 
+               a.publication_date, a.content, a.page_url
+        FROM articles a
+        WHERE a.newspaper_name LIKE ?
+        ORDER BY a.publication_date DESC
+        LIMIT 200
+    ''', (f'%{newspaper}%',))
+    
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    for r in results:
+        if r['content'] and len(r['content']) > 200:
+            r['content'] = r['content'][:200] + '...'
+    
+    return results
+
+def get_all_newspapers():
+    """Get list of all newspapers in the database"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT DISTINCT newspaper_name, COUNT(*) as count 
+        FROM articles 
+        GROUP BY newspaper_name 
+        ORDER BY count DESC 
+        LIMIT 100
+    ''')
+    newspapers = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return newspapers
+
+def get_all_sources():
+    """Get list of all sources with counts"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT source, COUNT(*) as count 
+        FROM articles 
+        GROUP BY source
+    ''')
+    sources = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return sources
+
+def get_all_years():
+    """Get list of all years with article counts"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT SUBSTR(publication_date, 1, 4) as year, COUNT(*) as count 
+        FROM articles 
+        WHERE publication_date IS NOT NULL AND publication_date != ''
+        GROUP BY year 
+        ORDER BY year DESC
+    ''')
+    years = [dict(row) for row in cursor.fetchall() if row['year']]
+    conn.close()
+    return years
+
+def search_articles(query, year_from=None, year_to=None, limit=100):
+    """Search articles with optional year filtering"""
     conn = get_db()
     cursor = conn.cursor()
     
     try:
-        cursor.execute('''
-            SELECT a.id, a.source, a.title, a.newspaper_name, 
-                   a.publication_date, a.content, a.page_url
-            FROM articles a
-            JOIN articles_fts f ON a.id = f.rowid
-            WHERE articles_fts MATCH ?
-            ORDER BY a.publication_date DESC
-            LIMIT ?
-        ''', (query, limit))
+        if year_from or year_to:
+            cursor.execute('''
+                SELECT a.id, a.source, a.title, a.newspaper_name, 
+                       a.publication_date, a.content, a.page_url
+                FROM articles a
+                JOIN articles_fts f ON a.id = f.rowid
+                WHERE articles_fts MATCH ?
+                ORDER BY a.publication_date DESC
+            ''', (query,))
+            
+            results = [dict(row) for row in cursor.fetchall()]
+            
+            filtered = []
+            for article in results:
+                pub_date = article.get('publication_date', '')
+                if pub_date and len(pub_date) >= 4:
+                    year = int(pub_date[:4])
+                    if year_from and year < int(year_from):
+                        continue
+                    if year_to and year > int(year_to):
+                        continue
+                    filtered.append(article)
+            
+            results = filtered[:limit]
+        else:
+            cursor.execute('''
+                SELECT a.id, a.source, a.title, a.newspaper_name, 
+                       a.publication_date, a.content, a.page_url
+                FROM articles a
+                JOIN articles_fts f ON a.id = f.rowid
+                WHERE articles_fts MATCH ?
+                ORDER BY a.publication_date DESC
+                LIMIT ?
+            ''', (query, limit))
+            
+            results = [dict(row) for row in cursor.fetchall()]
         
-        results = [dict(row) for row in cursor.fetchall()]
         for r in results:
-            if r['content'] and len(r['content']) > 300:
-                r['content'] = r['content'][:300] + '...'
+            if r['content'] and len(r['content']) > 200:
+                r['content'] = r['content'][:200] + '...'
+        
         return results
     except:
         return []
@@ -214,239 +392,484 @@ def get_stats():
     total = cursor.fetchone()['total']
     cursor.execute('SELECT COUNT(DISTINCT newspaper_name) as newspapers FROM articles')
     newspapers = cursor.fetchone()['newspapers']
+    
+    cursor.execute('''
+        SELECT MIN(publication_date) as min_date, MAX(publication_date) as max_date 
+        FROM articles 
+        WHERE publication_date IS NOT NULL AND publication_date != ''
+    ''')
+    date_range = cursor.fetchone()
+    min_year = date_range['min_date'][:4] if date_range['min_date'] else None
+    max_year = date_range['max_date'][:4] if date_range['max_date'] else None
+    
     conn.close()
-    return {'total': total, 'newspapers': newspapers}
+    return {'total': total, 'newspapers': newspapers, 'min_year': min_year, 'max_year': max_year}
 
 # ==================== MAIN APP ====================
 init_database()
 api_keys = load_api_keys()
 stats = get_stats()
 
-# ==================== CLEAN, WORKING UI ====================
+# ==================== LIBRARY-STYLE UI ====================
 
-# Title
-st.title("📰 Newspaper Archive")
-st.markdown("Access historical and contemporary newspapers from trusted sources")
+# Header
+st.title("📚 Newspaper Library")
+st.markdown("A comprehensive digital library of historical and contemporary newspapers")
 
-# Stats row
-col1, col2, col3 = st.columns(3)
+# Stats banner
+col1, col2, col3, col4 = st.columns(4)
 with col1:
     st.metric("Total Articles", f"{stats['total']:,}")
 with col2:
     st.metric("Newspapers", f"{stats['newspapers']:,}")
 with col3:
-    st.metric("Data Sources", "3")
+    if stats['min_year']:
+        st.metric("Earliest", stats['min_year'])
+with col4:
+    if stats['max_year']:
+        st.metric("Latest", stats['max_year'])
 
 st.divider()
 
-# ==================== IMPORT SECTION ====================
-st.subheader("📥 Import Content")
+# ==================== LIBRARY NAVIGATION ====================
+# Create tabs for different browsing modes
+tab_library, tab_search, tab_import = st.tabs(["📚 Browse Library", "🔍 Search & Filter", "📥 Import Content"])
 
-tab1, tab2, tab3 = st.tabs(["🇺🇸 US Historical (Free)", "🇬🇧 The Guardian", "🇦🇺 Australian (Trove)"])
+# ==================== TAB 1: BROWSE LIBRARY ====================
+with tab_library:
+    if stats['total'] == 0:
+        st.info("📭 The library is empty. Go to the 'Import Content' tab to add articles.")
+    else:
+        # Browse options
+        browse_by = st.radio(
+            "Browse by:",
+            ["📅 Year", "📰 Newspaper", "🗞️ Source", "🔄 Recent Articles"],
+            horizontal=True
+        )
+        
+        st.divider()
+        
+        if browse_by == "📅 Year":
+            st.subheader("Browse by Year")
+            years = get_all_years()
+            
+            # Create a grid of year cards
+            cols = st.columns(5)
+            for idx, year_data in enumerate(years[:30]):  # Show last 30 years
+                year = year_data['year']
+                count = year_data['count']
+                with cols[idx % 5]:
+                    with st.container():
+                        st.markdown(f"""
+                        <div style="
+                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                            padding: 1rem;
+                            border-radius: 10px;
+                            text-align: center;
+                            margin: 0.5rem 0;
+                            cursor: pointer;
+                        ">
+                            <h3 style="color: white; margin: 0;">{year}</h3>
+                            <p style="color: white; margin: 0; font-size: 0.8rem;">{count} articles</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        if st.button(f"View {year}", key=f"year_{year}", use_container_width=True):
+                            st.session_state.selected_year = year
+                            st.session_state.view_year = True
+                            st.rerun()
+            
+            # Show selected year's articles
+            if hasattr(st.session_state, 'view_year') and st.session_state.view_year:
+                year = st.session_state.selected_year
+                st.divider()
+                st.subheader(f"📅 {year} - Articles")
+                
+                articles = get_articles_by_year(year)
+                for article in articles:
+                    with st.container():
+                        col1, col2 = st.columns([4, 1])
+                        with col1:
+                            st.markdown(f"**{article['title']}**")
+                            st.caption(f"📰 {article['newspaper_name']} | 📅 {article['publication_date']}")
+                            if article['content']:
+                                st.text(article['content'][:150] + "...")
+                        with col2:
+                            st.link_button("Read Article →", article['page_url'])
+                        st.divider()
+        
+        elif browse_by == "📰 Newspaper":
+            st.subheader("Browse by Newspaper")
+            newspapers = get_all_newspapers()
+            
+            # Search newspapers
+            newspaper_search = st.text_input("Search newspapers", placeholder="Enter newspaper name...")
+            
+            filtered_newspapers = newspapers
+            if newspaper_search:
+                filtered_newspapers = [n for n in newspapers if newspaper_search.lower() in n['newspaper_name'].lower()]
+            
+            # Display newspaper cards
+            cols = st.columns(3)
+            for idx, paper in enumerate(filtered_newspapers[:30]):
+                with cols[idx % 3]:
+                    with st.container():
+                        st.markdown(f"""
+                        <div style="
+                            border: 1px solid #e0e0e0;
+                            padding: 1rem;
+                            border-radius: 8px;
+                            margin: 0.5rem 0;
+                        ">
+                            <h4>{paper['newspaper_name'][:50]}</h4>
+                            <p style="color: #666;">{paper['count']} articles</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        if st.button(f"Browse {paper['newspaper_name'][:30]}", key=f"paper_{idx}", use_container_width=True):
+                            st.session_state.selected_newspaper = paper['newspaper_name']
+                            st.session_state.view_newspaper = True
+                            st.rerun()
+            
+            # Show selected newspaper's articles
+            if hasattr(st.session_state, 'view_newspaper') and st.session_state.view_newspaper:
+                newspaper = st.session_state.selected_newspaper
+                st.divider()
+                st.subheader(f"📰 {newspaper} - Articles")
+                
+                articles = get_articles_by_newspaper(newspaper)
+                for article in articles:
+                    with st.container():
+                        col1, col2 = st.columns([4, 1])
+                        with col1:
+                            st.markdown(f"**{article['title']}**")
+                            st.caption(f"📅 {article['publication_date']}")
+                            if article['content']:
+                                st.text(article['content'][:150] + "...")
+                        with col2:
+                            st.link_button("Read Article →", article['page_url'])
+                        st.divider()
+        
+        elif browse_by == "🗞️ Source":
+            st.subheader("Browse by Source")
+            sources = get_all_sources()
+            
+            source_display = {
+                'chronicling_america': {'name': 'Chronicling America (LOC)', 'icon': '🇺🇸', 'color': '#3b82f6'},
+                'guardian': {'name': 'The Guardian', 'icon': '🇬🇧', 'color': '#10b981'}
+            }
+            
+            cols = st.columns(2)
+            for idx, source in enumerate(sources):
+                info = source_display.get(source['source'], {'name': source['source'], 'icon': '📰', 'color': '#6b7280'})
+                with cols[idx % 2]:
+                    with st.container():
+                        st.markdown(f"""
+                        <div style="
+                            background: {info['color']}10;
+                            border-left: 4px solid {info['color']};
+                            padding: 1rem;
+                            border-radius: 8px;
+                            margin: 0.5rem 0;
+                        ">
+                            <h3>{info['icon']} {info['name']}</h3>
+                            <p>{source['count']:,} articles</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        if st.button(f"Browse {info['name']}", key=f"source_{idx}", use_container_width=True):
+                            st.session_state.selected_source = source['source']
+                            st.session_state.view_source = True
+                            st.rerun()
+            
+            if hasattr(st.session_state, 'view_source') and st.session_state.view_source:
+                source = st.session_state.selected_source
+                st.divider()
+                st.subheader(f"Articles from {source_display.get(source, {}).get('name', source)}")
+                
+                articles = get_articles_by_source(source)
+                for article in articles:
+                    with st.container():
+                        col1, col2 = st.columns([4, 1])
+                        with col1:
+                            st.markdown(f"**{article['title']}**")
+                            st.caption(f"📰 {article['newspaper_name']} | 📅 {article['publication_date']}")
+                            if article['content']:
+                                st.text(article['content'][:150] + "...")
+                        with col2:
+                            st.link_button("Read Article →", article['page_url'])
+                        st.divider()
+        
+        else:  # Recent Articles
+            st.subheader("Recent Articles")
+            
+            # Pagination
+            articles_per_page = 20
+            total_articles = get_total_article_count()
+            total_pages = (total_articles // articles_per_page) + 1
+            
+            if 'page_num' not in st.session_state:
+                st.session_state.page_num = 1
+            
+            col_prev, col_page_info, col_next = st.columns([1, 2, 1])
+            with col_prev:
+                if st.button("← Previous", disabled=st.session_state.page_num == 1):
+                    st.session_state.page_num -= 1
+                    st.rerun()
+            with col_page_info:
+                st.markdown(f"<div style='text-align: center'>Page {st.session_state.page_num} of {total_pages}</div>", unsafe_allow_html=True)
+            with col_next:
+                if st.button("Next →", disabled=st.session_state.page_num == total_pages):
+                    st.session_state.page_num += 1
+                    st.rerun()
+            
+            offset = (st.session_state.page_num - 1) * articles_per_page
+            articles = get_all_articles(limit=articles_per_page, offset=offset)
+            
+            for article in articles:
+                with st.container():
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        st.markdown(f"**{article['title']}**")
+                        st.caption(f"📰 {article['newspaper_name']} | 📅 {article['publication_date']} | Source: {article['source'].replace('_', ' ').title()}")
+                        if article['content']:
+                            st.text(article['content'][:150] + "...")
+                    with col2:
+                        st.link_button("Read Article →", article['page_url'])
+                    st.divider()
 
-# Tab 1 - Chronicling America (Free)
-with tab1:
-    st.markdown("**Chronicling America - Library of Congress**")
-    st.caption("Free access to US historical newspapers (1777-1963)")
+# ==================== TAB 2: SEARCH & FILTER ====================
+with tab_search:
+    st.subheader("Search the Library")
     
-    events = {
-        "Apollo 11 Moon Landing (1969)": (1969, 7, 20),
-        "Pearl Harbor Attack (1941)": (1941, 12, 7),
-        "End of WWII (1945)": (1945, 9, 2),
-        "Titanic Sinking (1912)": (1912, 4, 15),
-        "JFK Assassination (1963)": (1963, 11, 22),
-    }
+    # Advanced search form
+    with st.form("search_form"):
+        search_term = st.text_input("Search keywords", placeholder="Enter any words, names, or topics...")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            year_from = st.selectbox("From Year", ["Any"] + [str(y['year']) for y in get_all_years()])
+        with col2:
+            year_to = st.selectbox("To Year", ["Any"] + [str(y['year']) for y in get_all_years()])
+        
+        submitted = st.form_submit_button("🔍 Search", type="primary", use_container_width=True)
     
-    selected = st.multiselect("Select events to import", list(events.keys()), default=list(events.keys())[:2])
+    if submitted and search_term:
+        from_year = year_from if year_from != "Any" else None
+        to_year = year_to if year_to != "Any" else None
+        
+        with st.spinner(f"Searching for '{search_term}'..."):
+            results = search_articles(search_term, from_year, to_year, limit=100)
+        
+        if results:
+            st.success(f"Found {len(results)} articles")
+            
+            for article in results:
+                with st.container():
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        st.markdown(f"**{article['title']}**")
+                        st.caption(f"📰 {article['newspaper_name']} | 📅 {article['publication_date']}")
+                        if article['content']:
+                            st.text(article['content'][:150] + "...")
+                    with col2:
+                        st.link_button("Read Article →", article['page_url'])
+                    st.divider()
+        else:
+            st.info("No articles found. Try different keywords or import more content.")
+    else:
+        st.info("Enter search terms above to find articles in the library.")
+
+# ==================== TAB 3: IMPORT CONTENT ====================
+with tab_import:
+    st.subheader("Add Content to Library")
     
-    if st.button("Import Selected Events", type="primary"):
+    # Unlimited topics input
+    st.markdown("### 📥 Import from Chronicling America (Free)")
+    st.caption("US historical newspapers 1777-1963 - No API key required")
+    
+    # Custom date picker
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        import_year = st.number_input("Year", min_value=1777, max_value=1963, value=1969)
+    with col2:
+        import_month = st.selectbox("Month", range(1, 13), index=6)
+    with col3:
+        import_day = st.selectbox("Day", range(1, 32), index=19)
+    
+    if st.button("Import by Specific Date", type="primary"):
         source = ChroniclingAmericaSource()
-        progress = st.progress(0)
-        status = st.empty()
-        total = 0
-        
-        for i, event in enumerate(selected):
-            year, month, day = events[event]
-            status.text(f"Importing: {event}...")
-            count = source.import_date(year, month, day)
-            total += count
-            progress.progress((i + 1) / len(selected))
-            time.sleep(0.5)
-        
-        status.text(f"✅ Imported {total} articles")
-        st.success(f"Successfully added {total} articles")
-        time.sleep(1.5)
-        st.rerun()
-
-# Tab 2 - The Guardian
-with tab2:
-    st.markdown("**The Guardian**")
-    st.caption("Modern news articles (1999-present)")
+        with st.spinner(f"Importing articles from {import_year}-{import_month:02d}-{import_day:02d}..."):
+            count = source.import_date(import_year, import_month, import_day)
+            if count > 0:
+                st.success(f"✅ Imported {count} articles")
+                time.sleep(1.5)
+                st.rerun()
+            else:
+                st.warning("No articles found for this date")
     
+    st.divider()
+    
+    # Historical events (pre-defined but can be extended)
+    st.markdown("### 📜 Historical Events")
+    
+    # Allow custom event input
+    custom_event = st.text_input("Or add your own event (Year-Month-Day)", placeholder="1969-07-20")
+    if custom_event:
+        try:
+            date_parts = custom_event.split('-')
+            if len(date_parts) == 3:
+                year, month, day = int(date_parts[0]), int(date_parts[1]), int(date_parts[2])
+                if st.button(f"Import {custom_event}"):
+                    source = ChroniclingAmericaSource()
+                    with st.spinner(f"Importing articles from {custom_event}..."):
+                        count = source.import_date(year, month, day)
+                        if count > 0:
+                            st.success(f"✅ Imported {count} articles")
+                            time.sleep(1.5)
+                            st.rerun()
+                        else:
+                            st.warning("No articles found")
+        except:
+            st.error("Please use format: YYYY-MM-DD")
+    
+    # Expandable list of historical events
+    with st.expander("Browse Historical Events"):
+        events = {
+            "American Revolution": "1776-07-04",
+            "Civil War Start": "1861-04-12",
+            "Lincoln Assassination": "1865-04-15",
+            "Titanic Sinks": "1912-04-15",
+            "WWI Ends": "1918-11-11",
+            "Stock Market Crash": "1929-10-29",
+            "Pearl Harbor": "1941-12-07",
+            "D-Day": "1944-06-06",
+            "Atomic Bomb": "1945-08-06",
+            "JFK Assassination": "1963-11-22",
+            "Moon Landing": "1969-07-20"
+        }
+        
+        cols = st.columns(3)
+        for idx, (event, date) in enumerate(events.items()):
+            with cols[idx % 3]:
+                if st.button(f"{event}\n{date}", key=f"event_{idx}", use_container_width=True):
+                    year, month, day = map(int, date.split('-'))
+                    source = ChroniclingAmericaSource()
+                    with st.spinner(f"Importing {event}..."):
+                        count = source.import_date(year, month, day)
+                        if count > 0:
+                            st.success(f"✅ Imported {count} articles from {event}")
+                            time.sleep(1.5)
+                            st.rerun()
+    
+    st.divider()
+    
+    # The Guardian import
+    st.markdown("### 🇬🇧 The Guardian")
     if api_keys['guardian']:
         st.success("✅ API key configured")
         
-        topics = st.multiselect(
-            "Topics",
-            ["Technology", "Science", "Climate", "Politics", "Arts"],
-            default=["Technology", "Science"]
-        )
+        # Unlimited topics - user can enter any topic
+        custom_topic = st.text_input("Enter any topic to import", placeholder="e.g., artificial intelligence, climate change, space exploration")
         
-        limit = st.slider("Articles per topic", 5, 30, 15)
+        if custom_topic:
+            topic_limit = st.slider("Number of articles", 5, 100, 20)
+            if st.button(f"Import articles about '{custom_topic}'"):
+                source = GuardianSource(api_keys['guardian'])
+                with st.spinner(f"Importing articles about {custom_topic}..."):
+                    count, msg = source.import_search(custom_topic, topic_limit)
+                    if count > 0:
+                        st.success(f"✅ Imported {count} articles about {custom_topic}")
+                        time.sleep(1.5)
+                        st.rerun()
+                    else:
+                        st.warning(f"No articles found for '{custom_topic}'")
         
-        if st.button("Import from Guardian", type="primary"):
-            source = GuardianSource(api_keys['guardian'])
-            progress = st.progress(0)
-            status = st.empty()
-            total = 0
-            
-            for i, topic in enumerate(topics):
-                status.text(f"Importing: {topic}...")
-                count, msg = source.import_search(topic.lower(), limit)
-                total += count
-                progress.progress((i + 1) / len(topics))
-                time.sleep(1)
-            
-            status.text(f"✅ Imported {total} articles")
-            st.success(f"Successfully added {total} articles")
-            time.sleep(1.5)
-            st.rerun()
+        # Suggested topics (just ideas, not limited)
+        with st.expander("Suggested Topics (click to use)"):
+            suggested = [
+                "artificial intelligence", "climate crisis", "renewable energy", 
+                "space exploration", "medical research", "democracy", "human rights",
+                "economic policy", "education reform", "cultural heritage",
+                "technology innovation", "environmental protection", "social justice"
+            ]
+            cols = st.columns(3)
+            for idx, topic in enumerate(suggested):
+                with cols[idx % 3]:
+                    if st.button(topic, key=f"suggest_{idx}"):
+                        source = GuardianSource(api_keys['guardian'])
+                        with st.spinner(f"Importing articles about {topic}..."):
+                            count, msg = source.import_search(topic, 15)
+                            if count > 0:
+                                st.success(f"✅ Imported {count} articles about {topic}")
+                                time.sleep(1.5)
+                                st.rerun()
     else:
-        st.warning("⚠️ API key required")
-        st.info("Add your Guardian API key in the sidebar")
-        
-        guardian_input = st.text_input("Guardian API Key", type="password", key="guardian_input")
+        st.warning("⚠️ API key required for The Guardian")
+        guardian_input = st.text_input("Enter Guardian API Key", type="password")
         if st.button("Save API Key"):
             api_keys['guardian'] = guardian_input
             save_api_keys(api_keys)
             st.success("API key saved!")
             st.rerun()
-        
-        st.caption("Get a free key at: https://open-platform.theguardian.com/access/")
-
-# Tab 3 - Trove
-with tab3:
-    st.markdown("**Trove - National Library of Australia**")
-    st.caption("Australian historical newspapers (1803-1954)")
-    
-    if api_keys['trove']:
-        st.success("✅ API key configured")
-        st.info("Trove API integration coming soon. Check back for updates!")
-    else:
-        st.warning("⚠️ API key required")
-        st.info("Add your Trove API key in the sidebar")
-        
-        trove_input = st.text_input("Trove API Key", type="password", key="trove_input")
-        if st.button("Save Trove Key"):
-            api_keys['trove'] = trove_input
-            save_api_keys(api_keys)
-            st.success("API key saved!")
-            st.rerun()
-        
-        st.caption("Get a free key at: https://trove.nla.gov.au/api")
-
-st.divider()
-
-# ==================== SEARCH SECTION ====================
-st.subheader("🔍 Search Archive")
-
-# Search input
-search_term = st.text_input("", placeholder="Enter keywords, names, or topics...", label_visibility="collapsed")
-
-col_search1, col_search2 = st.columns([1, 4])
-with col_search1:
-    search_clicked = st.button("Search", type="primary", use_container_width=True)
-with col_search2:
-    if st.button("Show Recent", use_container_width=True):
-        search_term = "the"
-        search_clicked = True
-
-# Display results
-if search_clicked and search_term:
-    with st.spinner(f"Searching for '{search_term}'..."):
-        results = search_articles(search_term)
-    
-    if results:
-        st.success(f"Found {len(results)} articles")
-        
-        for article in results:
-            with st.container():
-                st.markdown(f"**📄 [{article['title']}]({article['page_url']})**")
-                st.caption(f"📰 {article['newspaper_name']} | 📅 {article['publication_date'] or 'Date unknown'} | Source: {article['source'].replace('_', ' ').title()}")
-                if article['content']:
-                    st.text(article['content'][:200] + "...")
-                st.markdown(f"[Read full article →]({article['page_url']})")
-                st.divider()
-    else:
-        st.info("No results found. Try different keywords or import more articles.")
-
-elif stats['total'] == 0:
-    st.info("""
-    ### 👋 Welcome to Newspaper Archive!
-    
-    **Get started:**
-    1. Go to the **"Import Content"** section above
-    2. Select events or topics to import
-    3. Click **"Import"** to add articles
-    4. Search your archive!
-    
-    *Chronicling America is free and requires no API key*
-    """)
-else:
-    # Show recent articles
-    st.markdown("#### Recently Added")
-    recent = search_articles("the", limit=5)
-    if recent:
-        for article in recent:
-            st.markdown(f"**📄 {article['title'][:80]}**")
-            st.caption(f"{article['newspaper_name']} - {article['publication_date'] or 'Date unknown'}")
-            st.markdown(f"[Read more →]({article['page_url']})")
-            st.markdown("---")
+        st.caption("Get free key: https://open-platform.theguardian.com/access/")
 
 # ==================== SIDEBAR ====================
 with st.sidebar:
-    st.markdown("### 📊 Statistics")
+    st.markdown("### 📚 Library Overview")
+    
+    # Stats
     st.metric("Total Articles", f"{stats['total']:,}")
-    st.metric("Newspapers", f"{stats['newspapers']:,}")
+    
+    # Quick stats
+    if stats['total'] > 0:
+        st.divider()
+        st.markdown("### 📊 Collection Stats")
+        
+        # Sources breakdown
+        sources = get_all_sources()
+        for source in sources:
+            name = "Chronicling America" if source['source'] == 'chronicling_america' else "The Guardian"
+            st.caption(f"• {name}: {source['count']:,} articles")
+        
+        # Top newspapers
+        st.divider()
+        st.markdown("### 🗞️ Top Newspapers")
+        top_papers = get_all_newspapers()[:5]
+        for paper in top_papers:
+            st.caption(f"• {paper['newspaper_name'][:30]}: {paper['count']} articles")
     
     st.divider()
     
-    st.markdown("### 🔧 Configuration")
-    
-    with st.expander("API Keys"):
-        st.markdown("**The Guardian API**")
-        guardian_val = st.text_input("API Key", value=api_keys['guardian'], type="password", key="sidebar_guardian")
-        if st.button("Update Guardian Key"):
-            api_keys['guardian'] = guardian_val
-            save_api_keys(api_keys)
-            st.success("Saved!")
-            st.rerun()
-        
-        st.markdown("**Trove API**")
-        trove_val = st.text_input("API Key", value=api_keys['trove'], type="password", key="sidebar_trove")
-        if st.button("Update Trove Key"):
-            api_keys['trove'] = trove_val
-            save_api_keys(api_keys)
-            st.success("Saved!")
-            st.rerun()
+    # Quick actions
+    st.markdown("### ⚡ Quick Actions")
+    if st.button("🔄 Refresh Library", use_container_width=True):
+        st.rerun()
     
     st.divider()
     
     st.markdown("### ℹ️ About")
     st.caption("""
-    **Sources:**
-    - Chronicling America (LOC) - Free
-    - The Guardian - API key required
-    - Trove (NLA) - API key required
+    **Newspaper Library** is a comprehensive digital archive featuring:
+    
+    - 📰 **Chronicling America**: US historical newspapers (1777-1963)
+    - 🇬🇧 **The Guardian**: Modern news (1999-present)
+    
+    **Features:**
+    - Browse by year, newspaper, source
+    - Full-text search with date filters
+    - Unlimited topic import
+    - Paginated browsing
+    - Library-style organization
     
     All articles link to original sources.
     """)
-    
-    if stats['total'] > 0:
-        st.divider()
-        st.markdown("### 🗂️ Data Sources")
-        conn = get_db()
-        df = pd.read_sql_query("SELECT source, COUNT(*) as count FROM articles GROUP BY source", conn)
-        conn.close()
-        for _, row in df.iterrows():
-            st.caption(f"• {row['source'].replace('_', ' ').title()}: {row['count']} articles")
+
+# Footer
+st.divider()
+st.markdown("""
+<div style="text-align: center; padding: 1rem; color: #666;">
+    <p>📚 Newspaper Library • A comprehensive digital archive of historical and contemporary newspapers</p>
+    <p style="font-size: 0.8rem;">Powered by Library of Congress, The Guardian, and National Library of Australia</p>
+</div>
+""", unsafe_allow_html=True)
