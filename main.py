@@ -1,5 +1,5 @@
 """
-📚 Newspaper Archive - Library Style Interface
+📚 Newspaper Archive - Library Style Interface (FIXED)
 Complete library browsing with unlimited topics and full article catalog
 Run with: streamlit run streamlit_app.py
 """
@@ -474,7 +474,7 @@ with tab_library:
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        if st.button(f"View {year}", key=f"year_{year}", use_container_width=True):
+                        if st.button(f"View {year}", key=f"year_{idx}", use_container_width=True):
                             st.session_state.selected_year = year
                             st.session_state.view_year = True
                             st.rerun()
@@ -648,9 +648,10 @@ with tab_search:
         
         col1, col2 = st.columns(2)
         with col1:
-            year_from = st.selectbox("From Year", ["Any"] + [str(y['year']) for y in get_all_years()])
+            year_options = ["Any"] + [str(y['year']) for y in get_all_years()]
+            year_from = st.selectbox("From Year", year_options)
         with col2:
-            year_to = st.selectbox("To Year", ["Any"] + [str(y['year']) for y in get_all_years()])
+            year_to = st.selectbox("To Year", year_options)
         
         submitted = st.form_submit_button("🔍 Search", type="primary", use_container_width=True)
     
@@ -688,10 +689,10 @@ with tab_import:
     st.markdown("### 📥 Import from Chronicling America (Free)")
     st.caption("US historical newspapers 1777-1963 - No API key required")
     
-    # Custom date picker
+    # FIXED: Proper min/max values for year input
     col1, col2, col3 = st.columns(3)
     with col1:
-        import_year = st.number_input("Year", min_value=1777, max_value=1963, value=1969)
+        import_year = st.number_input("Year", min_value=1777, max_value=1963, value=1963, step=1)
     with col2:
         import_month = st.selectbox("Month", range(1, 13), index=6)
     with col3:
@@ -719,17 +720,23 @@ with tab_import:
         try:
             date_parts = custom_event.split('-')
             if len(date_parts) == 3:
-                year, month, day = int(date_parts[0]), int(date_parts[1]), int(date_parts[2])
-                if st.button(f"Import {custom_event}"):
-                    source = ChroniclingAmericaSource()
-                    with st.spinner(f"Importing articles from {custom_event}..."):
-                        count = source.import_date(year, month, day)
-                        if count > 0:
-                            st.success(f"✅ Imported {count} articles")
-                            time.sleep(1.5)
-                            st.rerun()
-                        else:
-                            st.warning("No articles found")
+                year = int(date_parts[0])
+                month = int(date_parts[1])
+                day = int(date_parts[2])
+                # Validate year range
+                if 1777 <= year <= 1963:
+                    if st.button(f"Import {custom_event}"):
+                        source = ChroniclingAmericaSource()
+                        with st.spinner(f"Importing articles from {custom_event}..."):
+                            count = source.import_date(year, month, day)
+                            if count > 0:
+                                st.success(f"✅ Imported {count} articles")
+                                time.sleep(1.5)
+                                st.rerun()
+                            else:
+                                st.warning("No articles found")
+                else:
+                    st.error("Year must be between 1777 and 1963 for Chronicling America")
         except:
             st.error("Please use format: YYYY-MM-DD")
     
@@ -754,13 +761,17 @@ with tab_import:
             with cols[idx % 3]:
                 if st.button(f"{event}\n{date}", key=f"event_{idx}", use_container_width=True):
                     year, month, day = map(int, date.split('-'))
-                    source = ChroniclingAmericaSource()
-                    with st.spinner(f"Importing {event}..."):
-                        count = source.import_date(year, month, day)
-                        if count > 0:
-                            st.success(f"✅ Imported {count} articles from {event}")
-                            time.sleep(1.5)
-                            st.rerun()
+                    # Check if year is within range
+                    if year <= 1963:
+                        source = ChroniclingAmericaSource()
+                        with st.spinner(f"Importing {event}..."):
+                            count = source.import_date(year, month, day)
+                            if count > 0:
+                                st.success(f"✅ Imported {count} articles from {event}")
+                                time.sleep(1.5)
+                                st.rerun()
+                    else:
+                        st.warning(f"{event} is from {year}. For events after 1963, use The Guardian import below.")
     
     st.divider()
     
@@ -791,7 +802,9 @@ with tab_import:
                 "artificial intelligence", "climate crisis", "renewable energy", 
                 "space exploration", "medical research", "democracy", "human rights",
                 "economic policy", "education reform", "cultural heritage",
-                "technology innovation", "environmental protection", "social justice"
+                "technology innovation", "environmental protection", "social justice",
+                "digital transformation", "sustainable development", "global health",
+                "scientific discovery", "cultural diversity", "future of work"
             ]
             cols = st.columns(3)
             for idx, topic in enumerate(suggested):
